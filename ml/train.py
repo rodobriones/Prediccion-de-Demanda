@@ -8,7 +8,6 @@ registra las metricas en la tabla `modelos`.
 import io
 import os
 import sys
-from datetime import date
 
 import joblib
 import numpy as np
@@ -26,7 +25,7 @@ MODEL_PATH = "modelo-latest.joblib"
 
 
 def construir_features(df: pd.DataFrame) -> pd.DataFrame:
-    f = df["fecha"].map(date.fromisoformat) if df["fecha"].dtype == object else df["fecha"].dt.date
+    f = pd.to_datetime(df["fecha"]).dt.date  # ponytail: parsea string o datetime, sin adivinar dtype
     df = df.assign(
         dia_semana=[d.weekday() for d in f],
         mes=[d.month for d in f],
