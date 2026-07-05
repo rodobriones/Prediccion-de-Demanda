@@ -1,0 +1,9 @@
+# Deps de la función Python de Vercel (/api). Mínimo absoluto:
+# el límite es 500 MB sin comprimir. No agregar nada más.
+fastapi
+supabase
+scikit-learn
+pandas
+numpy
+joblib
+pyjwt

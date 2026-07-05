@@ -1,0 +1,26 @@
+# Dependencias
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Builds
+web/dist/
+.vercel/
+*.tsbuildinfo
+
+# Secretos — NUNCA commitear
+.env
+.env.*
+!.env.example
+
+# Modelos entrenados (viven en Supabase Storage, no en git)
+*.joblib
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

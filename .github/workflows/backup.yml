@@ -1,0 +1,29 @@
+# Respaldo lógico semanal (el free tier no tiene point-in-time recovery).
+# Requiere el secret SUPABASE_DB_URL (Dashboard > Settings > Database >
+# Connection string, modo session).
+name: Backup semanal de la base
+
+on:
+  schedule:
+    - cron: "0 5 * * 0" # domingo 05:00 UTC
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instalar postgresql-client 17
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+      - name: Dump lógico
+        run: pg_dump "$SUPABASE_DB_URL" --schema=public -F c -f backup.dump
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backup-${{ github.run_id }}
+          path: backup.dump
+          retention-days: 30

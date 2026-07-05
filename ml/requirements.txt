@@ -1,0 +1,5 @@
+supabase
+scikit-learn
+pandas
+numpy
+joblib
