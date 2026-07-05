@@ -2,12 +2,20 @@ name: Entrenar modelo de demanda
 
 on:
   schedule:
-    - cron: "0 6 * * 0" # domingo 06:00 UTC
+    # Domingo y miércoles 06:00 UTC: reentrena y, sobre todo, toca la base cada
+    # 3-4 días para que Supabase free (pausa a ~7 días de inactividad) no duerma.
+    - cron: "0 6 * * 0,3"
   workflow_dispatch:
+
+# No solapar corridas si una se atrasa.
+concurrency:
+  group: train
+  cancel-in-progress: false
 
 jobs:
   train:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # corta un runner colgado antes de que gaste minutos
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
