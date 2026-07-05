@@ -7,7 +7,10 @@
 """
 
 import io
+import json
 import os
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
 import joblib
@@ -15,7 +18,6 @@ import jwt
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from supabase import create_client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -47,13 +49,23 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-_cache = {}  # modelo y cliente cacheados entre invocaciones warm
+_cache = {}  # modelo cacheado entre invocaciones warm
 
 
-def _sb():
-    if "sb" not in _cache:
-        _cache["sb"] = create_client(SUPABASE_URL, SERVICE_KEY)
-    return _cache["sb"]
+def _http_get(url: str, headers: dict | None = None, timeout: float = 5.0):
+    # ponytail: urllib en vez de supabase-py; ese paquete arrastra ~70 MB
+    # (cryptography, httpx, realtime...) y revienta el limite de 225 MB de la
+    # funcion. Devuelve la respuesta (usar como context manager).
+    h = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}"}
+    if headers:
+        h.update(headers)
+    return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=timeout)
+
+
+def _count_de(content_range: str) -> int:
+    # PostgREST devuelve "0-24/573" o "*/0"; extrae el total tras la barra
+    cola = content_range.rsplit("/", 1)[-1] if "/" in content_range else ""
+    return int(cola) if cola.isdigit() else 0
 
 
 def verificar_jwt(request: Request) -> dict:
@@ -93,19 +105,13 @@ def verificar_jwt(request: Request) -> dict:
     # API de Auth (service_role) y se cachea con TTL. Fail-open ante error de
     # red para no bloquear a usuarios legítimos por una falla transitoria.
     if sub and claims.get("aal") != "aal2":
-        import json
-        import urllib.request
         mfa_cache = _cache.setdefault("_mfa", {})
         cached = mfa_cache.get(sub)
         if cached is None or now_ts - cached[1] > 300.0:
             inscrito = False
             try:
-                req = urllib.request.Request(
-                    f"{SUPABASE_URL}/auth/v1/admin/users/{sub}",
-                    headers={"apikey": SERVICE_KEY,
-                             "Authorization": f"Bearer {SERVICE_KEY}"},
-                )
-                with urllib.request.urlopen(req, timeout=3) as resp:
+                with _http_get(f"{SUPABASE_URL}/auth/v1/admin/users/{sub}",
+                               timeout=3) as resp:
                     factores = json.loads(resp.read()).get("factors") or []
                 inscrito = any(f.get("status") == "verified" for f in factores)
             except Exception:
@@ -120,7 +126,9 @@ def verificar_jwt(request: Request) -> dict:
 
 def cargar_modelo() -> dict:
     if "bundle" not in _cache:
-        data = _sb().storage.from_(BUCKET).download(MODEL_PATH)
+        url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{MODEL_PATH}"
+        with _http_get(url, timeout=8) as resp:
+            data = resp.read()
         _cache["bundle"] = joblib.load(io.BytesIO(data))
     return _cache["bundle"]
 
@@ -179,19 +187,26 @@ def nowcast(claims: dict = Depends(verificar_jwt)):
     hist.append(ahora.timestamp())
     _rl[sub] = hist
 
-    sb = _sb()
-
     # order determinista: si hay varias jornadas abiertas hoy (varios
     # equipos), toma la más reciente en vez de una fila arbitraria.
-    jor = (sb.table("jornadas").select("id, equipo")
-           .eq("fecha", ahora.date().isoformat()).eq("abierta", True)
-           .order("id", desc=True).limit(1).execute()).data
+    q = urllib.parse.urlencode({
+        "select": "id,equipo",
+        "fecha": f"eq.{ahora.date().isoformat()}",
+        "abierta": "eq.true",
+        "order": "id.desc",
+        "limit": "1",
+    })
+    with _http_get(f"{SUPABASE_URL}/rest/v1/jornadas?{q}") as resp:
+        jor = json.loads(resp.read())
     if not jor:
         return {"jornada_abierta": False}
 
-    # head=True: solo queremos el conteo, no traer las filas
-    n = (sb.table("visitas").select("id", count="exact", head=True)
-         .eq("jornada_id", jor[0]["id"]).execute()).count or 0
+    # solo el conteo: limit=1 (traer 1 fila) + Prefer count=exact -> Content-Range
+    q = urllib.parse.urlencode({"select": "id", "jornada_id": f"eq.{jor[0]['id']}",
+                                "limit": "1"})
+    with _http_get(f"{SUPABASE_URL}/rest/v1/visitas?{q}",
+                   headers={"Prefer": "count=exact"}) as resp:
+        n = _count_de(resp.headers.get("Content-Range", ""))
 
     # ponytail: perfil horario fijo (mismo del seed); si la realidad
     # difiere, calcular el perfil desde visitas historicas.
@@ -203,3 +218,11 @@ def nowcast(claims: dict = Depends(verificar_jwt)):
         "total_estimado": round(n / frac),
         "hora": ahora.strftime("%H:%M"),
     }
+
+
+if __name__ == "__main__":
+    assert _count_de("0-24/573") == 573
+    assert _count_de("*/0") == 0
+    assert _count_de("0-0/1") == 1
+    assert _count_de("") == 0
+    print("ok")
