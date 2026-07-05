@@ -7,9 +7,11 @@ interface Modelo { creado: string; mae: number; rmse: number; r2: number; n_fila
 interface Prediccion { prediccion: number; equipo: string; fecha: string; }
 interface Nowcast { jornada_abierta: boolean; equipo?: string; visitas_actuales?: number; total_estimado?: number; hora?: string; }
 
-// Mañana en hora de Guatemala (UTC-6): desplazamos el reloj a GT antes de
+// Fecha en hora de Guatemala (UTC-6) desplazada `dias`: restamos 6h antes de
 // tomar la fecha, si no toISOString() (UTC) salta un día por la tarde-noche.
-const manana = () => new Date(Date.now() - 6 * 3600000 + 86400000).toISOString().slice(0, 10);
+const fechaGT = (dias = 0) =>
+  new Date(Date.now() - 6 * 3600000 + dias * 86400000).toISOString().slice(0, 10);
+const manana = () => fechaGT(1);
 
 export default function Dashboard() {
   const { session } = useAuth();
@@ -18,11 +20,18 @@ export default function Dashboard() {
   const [fecha, setFecha] = useState(manana());
   const [equipo, setEquipo] = useState("A");
   const [pred, setPred] = useState<Prediccion | null>(null);
+  const [semana, setSemana] = useState<Prediccion | null>(null);
+  const [mes, setMes] = useState<Prediccion | null>(null);
   const [nowcast, setNowcast] = useState<Nowcast | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const auth = { Authorization: `Bearer ${session?.access_token}` };
+
+  const predecirFecha = (f: string, eq: string): Promise<Prediccion | null> =>
+    fetch(`${API_URL}/api/predict?fecha=${f}&equipo=${eq}`, { headers: auth })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
 
   useEffect(() => {
     supabase
@@ -43,6 +52,14 @@ export default function Dashboard() {
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Pronóstico automático: semana (+7) y mes (+30) que vienen, para el equipo
+  // seleccionado. Se recalcula al cambiar de equipo.
+  useEffect(() => {
+    predecirFecha(fechaGT(7), equipo).then(setSemana);
+    predecirFecha(fechaGT(30), equipo).then(setMes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [equipo]);
 
   async function predecir() {
     setBusy(true); setError(""); setPred(null);
@@ -69,6 +86,17 @@ export default function Dashboard() {
       <div className="grid-2">
         <div className="tarjeta" style={{ borderTop: "4px solid var(--acento)" }}>
           <h2>Predicción de demanda</h2>
+          <div className="stats">
+            <div className="stat">
+              <div className="valor">{semana ? `${Math.round(semana.prediccion)}` : "—"}</div>
+              <div className="nombre">semana que viene · {fechaGT(7)} · equipo {equipo}</div>
+            </div>
+            <div className="stat">
+              <div className="valor">{mes ? `${Math.round(mes.prediccion)}` : "—"}</div>
+              <div className="nombre">mes que viene · {fechaGT(30)} · equipo {equipo}</div>
+            </div>
+          </div>
+          <h3 style={{ fontSize: "0.95rem", color: "var(--tinta-2)", marginTop: "1rem" }}>Consultar otra fecha</h3>
           <div className="grid-2">
             <div>
               <label className="etiqueta" htmlFor="p-fecha">Fecha</label>

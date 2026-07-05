@@ -7,4 +7,6 @@ export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY,
 );
 
-export const API_URL: string = import.meta.env.VITE_API_URL ?? "";
+// Vacío = llamadas relativas (/api/...), mismo origen, sin chocar con el CSP.
+// Se limpia cualquier "/" final para no generar "//api".
+export const API_URL: string = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
