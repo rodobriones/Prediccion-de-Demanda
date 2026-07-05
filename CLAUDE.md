@@ -69,7 +69,7 @@ con `cd ml` (o `working-directory: ml`, como en `train.yml`).
 ## GOTCHAS (leer antes de tocar)
 
 - **`service_role` key NUNCA en el frontend.** Solo vive en secrets de GitHub Actions y en env vars server-side de Vercel. El frontend usa exclusivamente la `anon` key. Jamás prefijar un secreto con `VITE_`.
-- **JWT: HS256 con el JWT Secret legacy.** `api/predict.py` verifica con `jwt.decode(..., algorithms=["HS256"])` usando `SUPABASE_JWT_SECRET`. Si el proyecto Supabase activó *JWT Signing Keys* asimétricas (ES256/RS256), esto da 401: habría que migrar a validación por JWKS. Para la demo, firma simétrica.
+- **JWT: ES256 vía JWKS.** El proyecto Supabase usa *JWT Signing Keys* asimétricas. `api/predict.py` valida con `PyJWKClient` contra `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` y `jwt.decode(..., algorithms=["ES256"], audience="authenticated")`. Requiere `pyjwt[crypto]` (trae `cryptography`) y que `SUPABASE_URL` esté en el entorno de Vercel. Ya NO se usa `SUPABASE_JWT_SECRET`. Si se revirtiera a HS256 legacy, habría que volver a validar con el secreto.
 - **Fechas en hora de Guatemala (UTC-6), no UTC.** `obtener_jornada` usa `(now() at time zone 'America/Guatemala')::date`. En el frontend, calcular fechas por defecto desplazando el reloj a GT antes de `toISOString()` (ver `manana()` en `Dashboard.tsx`), si no salta un día por la tarde-noche.
 - **`qr_code` de MFA es un data-URL para `<img src>`**, no SVG crudo. Renderizar con `<img>`, nunca con `dangerouslySetInnerHTML`.
 - **`documento` (DPI/CUI) no es accesible por SELECT directo.** El `grant` de columna en `pacientes` excluye `documento` (y `busqueda`). Solo las RPCs `SECURITY DEFINER` lo leen. Si un rol necesita mostrar el DPI, crear una RPC dedicada, no reabrir el grant.

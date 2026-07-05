@@ -16,11 +16,11 @@ from datetime import date, datetime, timedelta, timezone
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from jwt import PyJWKClient
 from pydantic import BaseModel
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
 
 BUCKET = "modelos"
@@ -54,6 +54,16 @@ def _http_get(url: str, headers: dict | None = None, timeout: float = 5.0):
     return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=timeout)
 
 
+def _jwks_client() -> PyJWKClient:
+    # Supabase firma los access tokens con JWT Signing Keys asimétricas (ES256);
+    # se validan contra el JWKS público del proyecto. Lazy: el constructor exige
+    # una URL válida, y el cliente cachea las claves entre invocaciones warm.
+    if "jwks" not in _cache:
+        _cache["jwks"] = PyJWKClient(
+            f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json", cache_keys=True)
+    return _cache["jwks"]
+
+
 def _count_de(content_range: str) -> int:
     # PostgREST devuelve "0-24/573" o "*/0"; extrae el total tras la barra
     cola = content_range.rsplit("/", 1)[-1] if "/" in content_range else ""
@@ -64,10 +74,12 @@ def verificar_jwt(request: Request) -> dict:
     auth = request.headers.get("authorization", "")
     if not auth.lower().startswith("bearer "):
         raise HTTPException(401, "Token requerido")
+    token = auth[7:]
     try:
-        claims = jwt.decode(auth[7:], JWT_SECRET, algorithms=["HS256"],
+        signing_key = _jwks_client().get_signing_key_from_jwt(token)
+        claims = jwt.decode(token, signing_key.key, algorithms=["ES256"],
                             audience="authenticated")
-    except jwt.PyJWTError:
+    except Exception:
         raise HTTPException(401, "Token inválido o expirado")
 
     # El cliente service_role omite RLS, así que las guardas que en la BD

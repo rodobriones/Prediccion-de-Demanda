@@ -77,10 +77,11 @@ nuevo rol entre al JWT.
 1. Importe el repo en [vercel.com](https://vercel.com). `vercel.json` ya define
    build del frontend y la función Python.
 2. **Environment Variables** (server-side, sin prefijo `VITE_`):
-   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET`,
+   `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
    `FRONTEND_ORIGIN` (p. ej. `https://su-app.vercel.app`).
-3. Variables del frontend: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
-   `VITE_API_URL` (la misma URL de la app).
+3. Variables del frontend: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+   `VITE_API_URL` **déjela vacía** (la API es del mismo origen; el frontend la
+   llama en relativo `/api/...`, así no choca con el CSP).
 4. En Supabase, **Authentication → URL Configuration**: agregue la URL de
    Vercel como *Site URL* / *Redirect URL*.
 
@@ -115,11 +116,11 @@ nuevo rol entre al JWT.
 
 ### Notas de configuración que afectan la seguridad
 
-- **Verificación del JWT (`/api/predict`)**: usa HS256 con el **JWT Secret
-  legacy** (Dashboard → Settings → API → *JWT Settings*). Si activó las
-  *JWT Signing Keys* asimétricas (ES256/RS256) de Supabase, la verificación
-  fallará con 401: en ese caso migre `verificar_jwt` a validar contra el JWKS
-  del proyecto. Para la demo, deje la firma simétrica.
+- **Verificación del JWT (`/api/predict`)**: valida los access tokens (firmados
+  con las *JWT Signing Keys* ES256 de Supabase) contra el **JWKS público** del
+  proyecto (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`) con `PyJWKClient`.
+  Requiere `SUPABASE_URL` en el entorno; ya no usa `SUPABASE_JWT_SECRET`. Si
+  revierte a HS256 legacy, vuelva a validar con el secreto.
 - **MFA de extremo a extremo**: el segundo factor (aal2) se exige tanto en el
   cliente como en el **servidor** — el helper `public.mfa_ok()` gatea todas las
   políticas RLS y las RPCs, y `api/predict.py` devuelve 403 sin aal2. Se aplica

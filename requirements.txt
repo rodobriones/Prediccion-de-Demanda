@@ -3,4 +3,4 @@
 # La inferencia se sirve por lookup del JSON que train.py sube al bucket
 # (predicciones deterministas); Supabase se consume por REST vía urllib.
 fastapi
-pyjwt
+pyjwt[crypto]
