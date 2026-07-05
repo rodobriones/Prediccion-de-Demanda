@@ -20,6 +20,7 @@ export default function Dashboard() {
   const [fecha, setFecha] = useState(manana());
   const [equipo, setEquipo] = useState("A");
   const [pred, setPred] = useState<Prediccion | null>(null);
+  const [pron7, setPron7] = useState<Punto[]>([]);
   const [semana, setSemana] = useState<Prediccion | null>(null);
   const [mes, setMes] = useState<Prediccion | null>(null);
   const [nowcast, setNowcast] = useState<Nowcast | null>(null);
@@ -53,10 +54,18 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pronóstico automático: semana (+7) y mes (+30) que vienen, para el equipo
-  // seleccionado. Se recalcula al cambiar de equipo.
+  // Pronóstico automático para el equipo seleccionado (se recalcula al cambiar
+  // de equipo): día a día la próxima semana, más los hitos +7 y +30.
   useEffect(() => {
-    predecirFecha(fechaGT(7), equipo).then(setSemana);
+    const dias = [1, 2, 3, 4, 5, 6, 7];
+    Promise.all(dias.map((d) => predecirFecha(fechaGT(d), equipo))).then((res) => {
+      setPron7(
+        res
+          .map((p, i) => (p ? { fecha: fechaGT(dias[i]), equipo, pacientes: Math.round(p.prediccion) } : null))
+          .filter((p): p is Punto => p !== null),
+      );
+      setSemana(res[6] ?? null);
+    });
     predecirFecha(fechaGT(30), equipo).then(setMes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [equipo]);
@@ -81,6 +90,11 @@ export default function Dashboard() {
       <div className="tarjeta">
         <h2>Visitas por jornada (últimas 90)</h2>
         <BarChart data={demanda} />
+      </div>
+
+      <div className="tarjeta" style={{ borderTop: "4px solid var(--acento)" }}>
+        <h2>Pronóstico próxima semana · equipo {equipo}</h2>
+        <BarChart data={pron7} />
       </div>
 
       <div className="grid-2">
