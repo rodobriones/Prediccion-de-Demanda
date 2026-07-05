@@ -19,10 +19,10 @@ temático: [`docs/ARQUITECTURA.md`](./docs/ARQUITECTURA.md),
 | `web/src/auth/` | `AuthProvider` (sesión/rol/MFA), `RequireRole` (guarda), `MfaSetup` (alta TOTP). |
 | `web/src/pages/` | `Login`, `Admision`, `Consulta`, `Dashboard`. |
 | `web/src/components/` | `Layout` (navbar por rol), `BarChart` (SVG sin dependencias). |
-| `api/predict.py` | Función serverless FastAPI en Vercel: `/api/predict`, `/api/nowcast`, `/api/health`. Verifica JWT + CORS. |
+| `api/predict.py` | Función serverless FastAPI en Vercel: `/api/predict`, `/api/nowcast`, `/api/health`. Verifica JWT + CORS. Sirve predicciones por lookup del JSON del bucket (sin sklearn); habla con Supabase por REST vía `urllib`. |
 | `ml/seed.py` | Genera 18 meses de datos sintéticos (pacientes, jornadas, visitas). |
 | `ml/train.py` | Entrenamiento batch (GitHub Actions), sube el modelo al bucket privado. |
-| `ml/feriados.py` | Feriados de Guatemala (helper compartido seed/train; `api/predict.py` lo duplica). |
+| `ml/feriados.py` | Feriados de Guatemala (helper compartido seed/train). |
 | `ml/requirements.txt` | Deps de entrenamiento. |
 | `supabase/schema.sql` | Tablas, RLS, RPCs, vista, triggers, extensiones. **Fuente de verdad del modelo de datos.** |
 | `supabase/auth_hook.sql` | Custom Access Token Hook (inyecta `user_rol` en el JWT). |

@@ -2,18 +2,17 @@
 
 - Verifica el JWT de Supabase (Authorization: Bearer) antes de todo.
 - CORS restringido al origin del frontend (nunca *).
-- Descarga modelo-latest.joblib del bucket PRIVADO con la service_role
-  key (solo server-side) y lo cachea en memoria entre invocaciones.
+- Sirve las predicciones que train.py materializo a JSON en el bucket
+  PRIVADO (lookup por fecha+equipo). No carga sklearn: la funcion no cabe
+  en el limite de 225 MB con scipy/numpy/scikit-learn.
 """
 
-import io
 import json
 import os
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
-import joblib
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,15 +24,8 @@ JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
 
 BUCKET = "modelos"
-MODEL_PATH = "modelo-latest.joblib"
-EQUIPO_MAP = {"A": 0, "B": 1, "C": 2, "D": 3}
+PRED_PATH = "predicciones-latest.json"
 TZ_GT = timezone(timedelta(hours=-6))
-
-# Feriados GT — duplicado de ml/feriados.py (la funcion se despliega aislada)
-FERIADOS_GT = {(1, 1), (5, 1), (6, 30), (9, 15), (10, 20), (11, 1),
-               (12, 24), (12, 25), (12, 31)}
-FERIADOS_MOVILES = {date(2025, 4, 17), date(2025, 4, 18),
-                    date(2026, 4, 2), date(2026, 4, 3)}
 
 # Fraccion acumulada de visitas esperadas al FINAL de cada hora (0-23),
 # derivada del patron historico de llegadas (picos manana y media tarde).
@@ -124,21 +116,12 @@ def verificar_jwt(request: Request) -> dict:
     return claims
 
 
-def cargar_modelo() -> dict:
-    if "bundle" not in _cache:
-        url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{MODEL_PATH}"
+def cargar_predicciones() -> dict:
+    if "pred" not in _cache:
+        url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{PRED_PATH}"
         with _http_get(url, timeout=8) as resp:
-            data = resp.read()
-        _cache["bundle"] = joblib.load(io.BytesIO(data))
-    return _cache["bundle"]
-
-
-def es_feriado(d: date) -> int:
-    return int((d.month, d.day) in FERIADOS_GT or d in FERIADOS_MOVILES)
-
-
-def features_de(d: date, equipo: str) -> list:
-    return [[d.weekday(), d.month, d.isocalendar()[1], es_feriado(d), EQUIPO_MAP[equipo]]]
+            _cache["pred"] = json.loads(resp.read())
+    return _cache["pred"]
 
 
 class Prediccion(BaseModel):
@@ -161,11 +144,12 @@ def predict(
 ):
     if claims.get("user_rol") not in ("estadistica", "admin"):
         raise HTTPException(403, "Rol no autorizado")
-    bundle = cargar_modelo()
-    pred = bundle["model"].predict(features_de(fecha, equipo))[0]
+    datos = cargar_predicciones()
+    val = datos["predicciones"].get(f"{fecha.isoformat()}|{equipo}")
+    if val is None:
+        raise HTTPException(422, "Fecha fuera del horizonte de predicción")
     return Prediccion(
-        prediccion=round(max(0.0, float(pred)), 1),
-        equipo=equipo, fecha=fecha, modelo=bundle["metrics"],
+        prediccion=val, equipo=equipo, fecha=fecha, modelo=datos["metrics"],
     )
 
 

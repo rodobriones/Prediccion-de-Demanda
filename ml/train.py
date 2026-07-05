@@ -5,11 +5,11 @@ split TEMPORAL 80/20, sube el modelo al bucket privado `modelos` y
 registra las metricas en la tabla `modelos`.
 """
 
-import io
+import json
 import os
 import sys
+from datetime import date, timedelta
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
@@ -21,7 +21,10 @@ from feriados import es_feriado
 EQUIPO_MAP = {"A": 0, "B": 1, "C": 2, "D": 3}
 FEATURES = ["dia_semana", "mes", "semana_iso", "feriado", "equipo_cod"]
 BUCKET = "modelos"
-MODEL_PATH = "modelo-latest.joblib"
+PRED_PATH = "predicciones-latest.json"
+# Materializamos las predicciones (deterministas: fecha+equipo) para este
+# horizonte, asi /api/predict sirve por lookup sin cargar sklearn en Vercel.
+HORIZONTE_DIAS = 550
 
 
 def construir_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -66,21 +69,32 @@ def main():
     # Reentrena con TODO el dato para el modelo publicado
     modelo.fit(X, y)
 
-    buf = io.BytesIO()
-    joblib.dump({"model": modelo, "features": FEATURES, "equipo_map": EQUIPO_MAP,
-                 "metrics": {"mae": mae, "rmse": rmse, "r2": r2}}, buf)
+    # Materializa las predicciones del horizonte (desde hace 30 dias por si el
+    # dato va atrasado, hacia adelante HORIZONTE_DIAS) para servirlas por lookup.
+    hoy = date.today()
+    fechas = [hoy + timedelta(days=i) for i in range(-30, HORIZONTE_DIAS)]
+    futuro = pd.DataFrame([{"fecha": d.isoformat(), "equipo": e}
+                           for d in fechas for e in EQUIPO_MAP])
+    preds = modelo.predict(construir_features(futuro)[FEATURES])
+    tabla = {f"{r.fecha}|{r.equipo}": round(max(0.0, float(p)), 1)
+             for r, p in zip(futuro.itertuples(index=False), preds)}
 
+    payload = json.dumps({
+        "generado": hoy.isoformat(),
+        "metrics": {"mae": mae, "rmse": rmse, "r2": r2},
+        "predicciones": tabla,
+    }).encode()
     sb.storage.from_(BUCKET).upload(
-        MODEL_PATH, buf.getvalue(),
-        file_options={"content-type": "application/octet-stream", "upsert": "true"},
+        PRED_PATH, payload,
+        file_options={"content-type": "application/json", "upsert": "true"},
     )
     sb.table("modelos").insert({
         "mae": mae, "rmse": rmse, "r2": r2,
-        "n_filas": len(df), "storage_path": f"{BUCKET}/{MODEL_PATH}",
+        "n_filas": len(df), "storage_path": f"{BUCKET}/{PRED_PATH}",
     }).execute()
 
     print(f"Filas: {len(df)} | MAE: {mae:.2f} | RMSE: {rmse:.2f} | R2: {r2:.3f}")
-    print(f"Modelo subido a {BUCKET}/{MODEL_PATH}")
+    print(f"Predicciones ({len(tabla)}) subidas a {BUCKET}/{PRED_PATH}")
 
 
 if __name__ == "__main__":

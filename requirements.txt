@@ -1,8 +1,6 @@
-# Deps de la función Python de Vercel (/api). Mínimo absoluto:
-# el límite es ~225 MB tras optimizar. No agregar nada más.
-# supabase-py se evita a propósito (arrastra ~70 MB); predict.py habla con
-# Supabase por REST vía urllib. scipy/numpy entran como deps de scikit-learn.
+# Deps de la función Python de Vercel (/api). Mínimo absoluto.
+# NO agregar sklearn/scipy/numpy/supabase: no caben en el límite de ~225 MB.
+# La inferencia se sirve por lookup del JSON que train.py sube al bucket
+# (predicciones deterministas); Supabase se consume por REST vía urllib.
 fastapi
-scikit-learn
-joblib
 pyjwt

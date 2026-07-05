@@ -33,8 +33,8 @@ visitas coherentes con la vista `v_demanda_por_turno`.
 `es_feriado(date) → 0/1`. Combina feriados fijos de Guatemala (Año Nuevo, Día del
 Trabajo, Día del Ejército, Independencia, Revolución, Todos los Santos, Navidad,
 etc.) con una lista de móviles (Jueves/Viernes Santo de los años del dataset).
-`api/predict.py` **duplica** esta lista porque la función de Vercel se despliega
-aislada del paquete `ml/`.
+Solo la usa `train.py`/`seed.py`; `api/predict.py` ya no calcula features (sirve
+predicciones precalculadas), así que no necesita los feriados.
 
 ## Entrenamiento (`train.py`)
 
@@ -58,18 +58,22 @@ Corre en GitHub Actions (ver más abajo). Pasos:
 4. Entrena `HistGradientBoostingRegressor(random_state=42)`.
 5. Evalúa sobre el 20 % de test: **MAE**, **RMSE** (`sqrt(MSE)`), **R²**.
 6. **Reentrena con el 100 %** de los datos para el modelo publicado.
-7. Serializa con `joblib` un bundle
-   `{model, features, equipo_map, metrics}` y lo sube al bucket privado como
-   `modelos/modelo-latest.joblib` (upsert).
-8. Inserta una fila en la tabla `modelos` con las métricas y `n_filas`. Imprime
-   las métricas al final.
+7. **Materializa** las predicciones: como las features dependen solo de
+   `fecha`+`equipo`, la salida es determinista. Predice para un horizonte
+   (`HORIZONTE_DIAS`, desde −30 días hasta +550) × 4 equipos y arma una tabla
+   `{"YYYY-MM-DD|EQUIPO": prediccion}`.
+8. Sube al bucket privado un JSON `modelos/predicciones-latest.json` con
+   `{generado, metrics, predicciones}` (upsert) e inserta una fila en la tabla
+   `modelos` con las métricas y `n_filas`. Imprime las métricas al final.
 
 ## Publicación del modelo
 
-El modelo vive en el **bucket privado `modelos`** de Supabase Storage como
-`modelo-latest.joblib` (siempre el mismo path, upsert). Solo se accede con la
+Las predicciones viven en el **bucket privado `modelos`** de Supabase Storage
+como `predicciones-latest.json` (mismo path, upsert). Solo se accede con la
 `service_role` key: `train.py` lo escribe, `api/predict.py` lo lee (y lo cachea en
-memoria entre invocaciones warm).
+memoria entre invocaciones warm). **No se persiste el `.joblib`**: la función de
+Vercel no puede cargar `scikit-learn`/`scipy`/`numpy` (excede el límite de
+~225 MB), así que sirve las predicciones ya calculadas por lookup.
 
 ## Reentrenamiento (cron)
 
@@ -80,10 +84,9 @@ Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`. Repo público → minutos ilimi
 
 ## Inferencia (`api/predict.py`)
 
-- `GET /api/predict?fecha=YYYY-MM-DD&equipo=A` → predice el total de la jornada.
-  Reconstruye las **mismas features** del entrenamiento (`features_de`) y devuelve
-  `{prediccion, equipo, fecha, modelo:{mae,rmse,r2}}`. La predicción se acota a ≥ 0
-  y se redondea.
+- `GET /api/predict?fecha=YYYY-MM-DD&equipo=A` → busca la predicción en la tabla
+  materializada y devuelve `{prediccion, equipo, fecha, modelo:{mae,rmse,r2}}`.
+  Si la fecha cae fuera del horizonte publicado responde **422**.
 - Verifica el JWT y aplica CORS antes de responder (ver [SEGURIDAD](./SEGURIDAD.md)).
 
 ### Nowcasting
