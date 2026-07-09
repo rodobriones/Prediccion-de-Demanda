@@ -124,7 +124,8 @@ y no existen políticas de INSERT/UPDATE/DELETE para usuarios; solo `admin` lee.
 `api/predict.py` es pública en URL, por lo que:
 
 - **Verifica el JWT** del header `Authorization: Bearer` antes de responder
-  (`jwt.decode` con HS256 y `audience="authenticated"`). Sin token válido → **401**.
+  (`PyJWKClient` + `jwt.decode` con **ES256** contra el JWKS del proyecto y
+  `audience="authenticated"`). Sin token válido → **401**.
 - **Enforcea el rol server-side**: como usa la `service_role` (que omite RLS),
   replica el control de acceso — solo `estadistica`/`admin` acceden a `/api/predict`
   y `/api/nowcast`; un `digitador` recibe **403**. Sin esto, saltarse RLS con la
@@ -135,10 +136,11 @@ y no existen políticas de INSERT/UPDATE/DELETE para usuarios; solo `admin` lee.
 - **CORS restringido** al origin del frontend (`FRONTEND_ORIGIN`), nunca `*`.
 - `/api/health` no expone datos sensibles.
 
-> **JWT — HS256 vs JWKS:** la verificación usa HS256 con el **JWT Secret legacy**
-> del proyecto (`SUPABASE_JWT_SECRET`). Si se activaron las *JWT Signing Keys*
-> asimétricas de Supabase (ES256/RS256), la verificación fallará con 401 y habrá
-> que migrar `verificar_jwt` a validar contra el JWKS del proyecto.
+> **JWT — validación por JWKS (ES256):** el proyecto usa las *JWT Signing Keys*
+> asimétricas de Supabase. `verificar_jwt` obtiene la clave pública del JWKS
+> (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`) con `PyJWKClient` y valida en
+> ES256. Requiere `pyjwt[crypto]` y `SUPABASE_URL` en el entorno; ya no se usa
+> `SUPABASE_JWT_SECRET`.
 
 ## Cabeceras de seguridad HTTP
 
@@ -186,12 +188,13 @@ limiting. Quedan como acciones fuera del código:
 1. **Deshabilitar el registro público** en el Dashboard (Authentication →
    *Disable sign ups*) — obligatorio, no derivable del SQL.
 2. **Cifrar los backups** antes de subirlos como artifact (`gpg --symmetric`).
-3. **Migrar a validación JWKS** si se activan claves de firma asimétricas.
-4. **Fijar versiones** en `requirements.txt`/`ml/requirements.txt` (builds
-   reproducibles; `scikit-learn`/`joblib` deben coincidir entre entrenamiento e
-   inferencia para no romper la deserialización del modelo).
+3. **Rotar las *JWT Signing Keys*** de Supabase periódicamente (la validación ya
+   es por JWKS/ES256).
+4. **Fijar versiones** en `ml/requirements.txt` para builds de entrenamiento
+   reproducibles (la función de Vercel ya no deserializa el modelo, así que no
+   depende de que las versiones de `scikit-learn` coincidan).
 5. **Rate limit consistente entre instancias** (tabla/Redis) si el free tier de
    Vercel escala a varias instancias frías.
-6. **Rotación manual** de `SUPABASE_SERVICE_KEY` y `SUPABASE_JWT_SECRET` si
+6. **Rotación manual** de `SUPABASE_SERVICE_KEY` (y de las *JWT Signing Keys*) si
    pudieron exponerse (Dashboard → Settings → API, y actualizar env vars en Vercel
    y GitHub Actions).

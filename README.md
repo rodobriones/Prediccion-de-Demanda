@@ -12,12 +12,12 @@ React + Vite (Vercel Hobby)  ──anon key──►  Supabase (Postgres + Auth 
         │                                        ▲                ▲
         │ JWT                                    │ service_role   │ service_role
         ▼                                        │                │
-/api/predict (FastAPI en Vercel) ◄── modelo-latest.joblib ── GitHub Actions (cron semanal: train.py)
+/api/predict (FastAPI en Vercel) ◄── predicciones-latest.json ── GitHub Actions (cron 2×/sem: train.py)
 ```
 
 - **Inferencia** (rápida, serverless, < 10 s) separada del **entrenamiento** (batch, GitHub Actions).
 - El frontend hace CRUD directo a Supabase con RLS; no hay backend Node.
-- Modelo: `HistGradientBoostingRegressor` (scikit-learn) — cabe de sobra en el límite de 500 MB de Vercel.
+- Modelo: `HistGradientBoostingRegressor` (scikit-learn), entrenado en Actions. Vercel **no** carga sklearn: `train.py` materializa las predicciones (deterministas por fecha+equipo) en un JSON y la función las sirve por lookup, así el bundle cabe en el límite (~225 MB) de las funciones Python de Vercel.
 
 ## Estructura
 
@@ -29,7 +29,7 @@ React + Vite (Vercel Hobby)  ──anon key──►  Supabase (Postgres + Auth 
 | `ml/train.py` | Entrenamiento + subida del modelo al bucket privado |
 | `supabase/schema.sql` | Tablas, RLS, RPCs, auditoría, búsqueda full-text/trigram |
 | `supabase/auth_hook.sql` | Custom Access Token Hook (rol en el JWT) |
-| `.github/workflows/` | `train.yml` (cron semanal) y `backup.yml` (dump lógico) |
+| `.github/workflows/` | `train.yml` (cron 2×/sem) y `backup.yml` (dump lógico) |
 
 ## Despliegue paso a paso (todo en tier gratis)
 
@@ -149,8 +149,9 @@ nuevo rol entre al JWT.
 - **Supabase free** pausa el proyecto tras ~7 días sin actividad (se reanuda
   desde el dashboard) y da 500 MB de base + 1 GB de Storage — este diseño usa
   una fracción mínima.
-- **Vercel Hobby** corta funciones a 10 s: la inferencia solo carga el modelo
-  (cacheado en memoria) y predice, responde en milisegundos.
+- **Vercel Hobby** corta funciones a 10 s y limita el bundle Python (~225 MB):
+  por eso la inferencia no carga sklearn, solo lee el JSON de predicciones
+  (cacheado en memoria) y hace lookup — responde en milisegundos.
 
 ## Verificación rápida de los criterios de aceptación
 

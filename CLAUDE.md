@@ -26,17 +26,17 @@ temático: [`docs/ARQUITECTURA.md`](./docs/ARQUITECTURA.md),
 | `ml/requirements.txt` | Deps de entrenamiento. |
 | `supabase/schema.sql` | Tablas, RLS, RPCs, vista, triggers, extensiones. **Fuente de verdad del modelo de datos.** |
 | `supabase/auth_hook.sql` | Custom Access Token Hook (inyecta `user_rol` en el JWT). |
-| `.github/workflows/train.yml` | Cron semanal de reentrenamiento + `workflow_dispatch`. |
+| `.github/workflows/train.yml` | Cron 2×/sem (dom+mié) de reentrenamiento + `workflow_dispatch`; también mantiene despierto Supabase free. |
 | `.github/workflows/backup.yml` | Dump lógico semanal como artifact. |
 | `vercel.json` | Build del frontend + función Python (`maxDuration` 10 s). |
-| `requirements.txt` (raíz) | Deps **mínimas** de la función de Vercel (límite 500 MB). |
+| `requirements.txt` (raíz) | Deps **mínimas** de la función de Vercel (`fastapi` + `pyjwt[crypto]`; límite ~225 MB, sin sklearn). |
 
 ## Stack
 
 - Frontend: React 18 + Vite 5 + TypeScript 5, `react-router-dom` 6, `@supabase/supabase-js` 2, `zod` 3.
 - Backend de datos: Supabase (Postgres + Auth + Storage), plan free.
-- Inferencia: FastAPI en Vercel (Python 3.12), `scikit-learn` `HistGradientBoostingRegressor`.
-- Entrenamiento: Python 3.12 en GitHub Actions.
+- Inferencia: FastAPI en Vercel (Python 3.12); sirve por lookup el JSON de predicciones (sin sklearn).
+- Entrenamiento: `scikit-learn` `HistGradientBoostingRegressor`, Python 3.12 en GitHub Actions.
 
 ## Comandos
 
@@ -52,7 +52,7 @@ python -m py_compile api/predict.py ml/seed.py ml/train.py ml/feriados.py
 # ML (requieren env vars; usan la SERVICE KEY)
 pip install -r ml/requirements.txt
 cd ml && python seed.py      # necesita SUPABASE_URL y SUPABASE_SERVICE_KEY
-cd ml && python train.py     # idem; lee v_demanda_por_turno, sube modelo-latest.joblib
+cd ml && python train.py     # idem; lee v_demanda_por_turno, sube predicciones-latest.json
 ```
 
 `train.py` y `seed.py` importan `feriados` de forma relativa, por eso se corren

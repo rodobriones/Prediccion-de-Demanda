@@ -21,41 +21,42 @@ Ver también: [SEGURIDAD](./SEGURIDAD.md) · [BASE-DE-DATOS](./BASE-DE-DATOS.md)
          │ JWT (Bearer)   └───────▲──────────────────▲───────────────┘
          ▼                        │ service_role     │ service_role
    ┌──────────────┐   descarga    │                  │
-   │ /api/predict │ ── modelo ────┘                  │
+   │ /api/predict │ ── JSON ──────┘                  │
    │  (FastAPI en │                                   │
-   │   Vercel)    │        ┌──────────────────────────┴───────┐
-   └──────────────┘        │ GitHub Actions (cron semanal)     │
-                           │ train.py: lee v_demanda_por_turno,│
-                           │ entrena, sube modelo-latest.joblib│
-                           └───────────────────────────────────┘
+   │   Vercel)    │        ┌──────────────────────────┴────────────┐
+   └──────────────┘        │ GitHub Actions (cron 2×/sem)           │
+                           │ train.py: lee v_demanda_por_turno,     │
+                           │ entrena, sube predicciones-latest.json │
+                           └────────────────────────────────────────┘
 ```
 
 ## Separación inferencia / entrenamiento
 
 Son dos caminos deliberadamente separados:
 
-- **Inferencia** (`api/predict.py`): serverless, rápida, síncrona. Carga el modelo
-  cacheado en memoria y llama `predict()`. Debe responder en **menos de 10 s**
-  (límite de Vercel Hobby); en la práctica es instantánea.
+- **Inferencia** (`api/predict.py`): serverless, rápida, síncrona. Lee el JSON de
+  predicciones (cacheado en memoria) y hace lookup por fecha+equipo. Debe responder
+  en **menos de 10 s** (límite de Vercel Hobby); en la práctica es instantánea.
 - **Entrenamiento** (`ml/train.py`): batch, pesado, asíncrono. Corre en GitHub
   Actions por cron. **Nunca** dentro de un request.
 
-El artefacto que los une es `modelo-latest.joblib` en un bucket privado de Storage:
-el entrenamiento lo escribe (upsert), la inferencia lo lee.
+El artefacto que los une es `predicciones-latest.json` en un bucket privado de
+Storage: el entrenamiento lo escribe (upsert), la inferencia lo lee.
 
 ## Decisiones de diseño
 
 ### Serverless para inferencia, batch para entrenamiento
 Entrenar tarda y consume memoria; hacerlo dentro de un request reventaría el
-límite de 10 s y el de 500 MB de las funciones Python de Vercel. Separarlo permite
-que la inferencia sea trivial (cargar + predecir) y que el reentrenamiento use los
+límite de 10 s y el de ~225 MB de las funciones Python de Vercel. Separarlo permite
+que la inferencia sea trivial (leer JSON + lookup) y que el reentrenamiento use los
 minutos ilimitados de Actions en repo público.
 
 ### `HistGradientBoostingRegressor`, no TensorFlow/PyTorch
-Los frameworks de deep learning no caben en el límite de **500 MB sin comprimir**
-de las funciones Python de Vercel. `scikit-learn` sí, y para una serie temporal
-tabular con pocas features un gradient boosting es más apropiado y más preciso que
-una red neuronal. El `requirements.txt` de la raíz se mantiene mínimo por esto.
+Para una serie temporal tabular con pocas features, un gradient boosting es más
+apropiado y más preciso que una red neuronal. Además, el modelo se entrena en
+Actions (sin límite de tamaño) y la función de Vercel **no lo carga**: sirve las
+predicciones ya materializadas por `train.py`, así el bundle se queda muy por
+debajo del límite (~225 MB) — ni siquiera necesita `scikit-learn`.
 
 ### El correlativo del paciente es una secuencia de Postgres
 El correlativo es el **ID permanente** del paciente, asignado una sola vez. Una
